@@ -126,8 +126,7 @@ private[anorm] object MetaData {
   private type PgMeta = { def getBaseTableName(i: Int): String }
 
   /** Returns metadata for given result set. */
-  def parse(rs: ResultSet, as: ColumnAliaser): MetaData = {
-    val meta = rs.getMetaData()
+  def parse(meta: ResultSetMetaData, as: ColumnAliaser): MetaData = {
     val nbColumns = meta.getColumnCount()
     MetaData(List.range(1, nbColumns + 1).map { i =>
       val cn = ColumnName({

@@ -35,9 +35,9 @@ object AnormSpec extends Specification with H2Database with AnormTest {
 
       ex aka "update executed" must beFalse /*not query*/ and {
         SQL("select * from test1 where id = {id}").on('id -> 10L)
-          .as(RowParser({ row =>
-            Success(row[String]("foo") -> row[Int]("bar"))
-          }).single) must_== ("Hello" -> 20)
+          .as(RowParser.successful.map { row =>
+            row[String]("foo") -> row[Int]("bar")
+          }.single) must_== ("Hello" -> 20)
       }
     }
 
@@ -281,9 +281,9 @@ object AnormSpec extends Specification with H2Database with AnormTest {
       rowList2(classOf[String] -> "foo", classOf[Int] -> "bar").
         append("row1", 100) :+ ("row2", 200)) { implicit c =>
 
-        SQL("SELECT * FROM test").as(RowParser({ row =>
-          Success(row[String]("foo") -> row[Int]("bar"))
-        }).*) aka "tuple list" must_== List("row1" -> 100, "row2" -> 200)
+        SQL("SELECT * FROM test").as(RowParser.successful.map { row =>
+          row[String]("foo") -> row[Int]("bar")
+        }.*) aka "tuple list" must_== List("row1" -> 100, "row2" -> 200)
       }
 
     "be parsed from class mapping" in withQueryResult(

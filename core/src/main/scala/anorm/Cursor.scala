@@ -21,7 +21,7 @@ object Cursor {
    * @param rs Result set, must be before first row
    * @return None if there is no result in the set
    */
-  private[anorm] def apply(rs: ResultSet, aliaser: ColumnAliaser): Option[Cursor] = if (!rs.next) None else Some(withMeta(rs, MetaData.parse(rs, aliaser)))
+  private[anorm] def apply(rs: ResultSet, aliaser: ColumnAliaser): Option[Cursor] = if (!rs.next) None else Some(withMeta(rs, MetaData.parse(rs.getMetaData(), aliaser)))
 
   def unapply(cursor: Cursor): Option[(Row, Option[Cursor])] =
     Some(cursor.row -> cursor.next)
@@ -33,7 +33,7 @@ object Cursor {
    */
   private[anorm] def onFirstRow(rs: ResultSet, aliaser: ColumnAliaser): Option[Cursor] = try {
     Some(new Cursor {
-      val meta = MetaData.parse(rs, aliaser)
+      val meta = MetaData.parse(rs.getMetaData, aliaser)
       val columns: List[Int] = List.range(1, meta.columnCount + 1)
       val row = ResultRow(meta, columns.map(rs.getObject(_)))
 

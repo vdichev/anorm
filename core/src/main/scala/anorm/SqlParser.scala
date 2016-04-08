@@ -26,6 +26,11 @@ object SqlParser extends FunctionAdapter {
         } yield v -> m) toRight NoColumnsInReturnedResult).
           flatMap(transformer.tupled).fold(Error(_), Success(_))
       }
+
+      def validate(meta: MetaData) =
+        MayErr((meta.ms.headOption toRight NoColumnsInReturnedResult).right.flatMap { m =>
+          transformer.validate(m).toEither
+        }.left.map(List(_)))
     }
 
   /**
@@ -49,7 +54,10 @@ object SqlParser extends FunctionAdapter {
         case _ => Success(out)
       }
 
-    RowParser[T] { row => go(row.data, row.metaData.ms, z) }
+    new RowParser[T] {
+      def apply(row: Row) = go(row.data, row.metaData.ms, z)
+      def validate(meta: MetaData): MayErr[List[SqlRequestError], Unit] = Right(())
+    }
   }
 
   /**
@@ -444,11 +452,16 @@ object SqlParser extends FunctionAdapter {
    * }}}
    */
   def get[T](name: String)(implicit extractor: Column[T]): RowParser[T] =
-    RowParser { row =>
-      (for {
+    new RowParser[T] {
+      def apply(row: Row) = (for {
         col <- row.get(name)
         res <- extractor.tupled(col)
       } yield res).fold(Error(_), Success(_))
+
+      def validate(meta: MetaData): MayErr[List[SqlRequestError], Unit] =
+        MayErr(meta.get(name).toRight(List(ColumnNotFound(name, meta.availableColumns))).right.flatMap { m =>
+          extractor.validate(m).toEither.left.map(List(_))
+        })
     }
 
   /**
@@ -466,11 +479,16 @@ object SqlParser extends FunctionAdapter {
    * }}}
    */
   def get[T](position: Int)(implicit extractor: Column[T]): RowParser[T] =
-    RowParser { row =>
-      (for {
+    new RowParser[T] {
+      def apply(row: Row) = (for {
         col <- row.getIndexed(position - 1)
         result <- extractor.tupled(col)
       } yield result).fold(e => Error(e), a => Success(a))
+
+      def validate(meta: MetaData): MayErr[List[SqlRequestError], Unit] =
+        MayErr(meta.ms.lift(position).toRight(List(ColumnNotFound(s"#$position", meta.availableColumns))).right.flatMap { m =>
+          extractor.validate(m).toEither.left.map(List(_))
+        })
     }
 
   /**
@@ -496,13 +514,11 @@ object SqlParser extends FunctionAdapter {
 final case class ~[+A, +B](_1: A, _2: B)
 
 object RowParser {
-  def apply[A](f: Row => SqlResult[A]): RowParser[A] = new RowParser[A] {
-    def apply(row: Row): SqlResult[A] = f(row)
-  }
-
   /** Row parser that result in successfully unchanged row. */
   object successful extends RowParser[Row] {
     def apply(row: Row): SqlResult[Row] = Success(row)
+
+    def validate(meta: MetaData): MayErr[List[SqlRequestError], Unit] = MayErr(Right(()))
   }
 }
 
@@ -523,7 +539,12 @@ trait RowParser[+A] extends (Row => SqlResult[A]) { parent =>
    * // an then returns the length of that
    * }}}
    */
-  def map[B](f: A => B): RowParser[B] = RowParser(parent.andThen(_.map(f)))
+  def map[B](f: A => B): RowParser[B] =
+    new RowParser[B] {
+      def apply(row: Row) = parent(row).map(f)
+      def validate(meta: MetaData): MayErr[List[SqlRequestError], Unit] =
+        parent.validate(meta)
+    }
 
   /**
    * Returns parser which collects information
@@ -533,11 +554,21 @@ trait RowParser[+A] extends (Row => SqlResult[A]) { parent =>
    * @param f Collecting function
    */
   def collect[B](otherwise: String)(f: PartialFunction[A, B]): RowParser[B] =
-    RowParser(parent(_).flatMap(f.lift(_).
-      fold[SqlResult[B]](Error(SqlMappingError(otherwise)))(Success(_))))
+    new RowParser[B] {
+      def apply(row: Row) = parent(row).flatMap(f.lift(_).
+        fold[SqlResult[B]](Error(SqlMappingError(otherwise)))(Success(_)))
+      def validate(meta: MetaData): MayErr[List[SqlRequestError], Unit] =
+        parent.validate(meta)
+    }
 
   def flatMap[B](k: A => RowParser[B]): RowParser[B] =
-    RowParser(row => parent(row).flatMap(k(_)(row)))
+    new RowParser[B] {
+      def apply(row: Row) = parent(row).flatMap(k(_)(row))
+      def validate(meta: MetaData): MayErr[List[SqlRequestError], Unit] =
+        // not enough info to know resulting parser from k
+        // should be OK if not used directly but through ~ and other methods in this trait
+        parent.validate(meta)
+    }
 
   /**
    * Combines this parser on the left of the parser `p` given as argument.
@@ -550,7 +581,15 @@ trait RowParser[+A] extends (Row => SqlResult[A]) { parent =>
    * }}}
    */
   def ~[B](p: RowParser[B]): RowParser[A ~ B] =
-    RowParser(row => parent(row).flatMap(a => p(row).map(new ~(a, _))))
+    new RowParser[A ~ B] {
+      def apply(row: Row) = parent(row).flatMap(a => p(row).map(new ~(a, _)))
+      def validate(meta: MetaData): MayErr[List[SqlRequestError], Unit] = {
+        val e1 = parent.validate(meta).toEither
+        val e2 = p.validate(meta).toEither
+        MayErr(if (e1.isRight && e2.isRight) Right(())
+        else Left((e1.left.toOption ++ e2.left.toOption).flatten.toList))
+      }
+    }
 
   /**
    * Combines this current parser with the one given as argument `p`,
@@ -567,7 +606,15 @@ trait RowParser[+A] extends (Row => SqlResult[A]) { parent =>
    * }}}
    */
   def ~>[B](p: RowParser[B]): RowParser[B] =
-    RowParser(row => parent(row).flatMap(_ => p(row)))
+    new RowParser[B] {
+      def apply(row: Row) = parent(row).flatMap(_ => p(row))
+      def validate(meta: MetaData): MayErr[List[SqlRequestError], Unit] = {
+        val e1 = parent.validate(meta).toEither
+        val e2 = p.validate(meta).toEither
+        MayErr(if (e1.isRight && e2.isRight) Right(())
+        else Left((e1.left.toOption ++ e2.left.toOption).flatten.toList))
+      }
+    }
 
   /**
    * Combines this current parser with the one given as argument `p`,
@@ -586,25 +633,40 @@ trait RowParser[+A] extends (Row => SqlResult[A]) { parent =>
   def <~[B](p: RowParser[B]): RowParser[A] = parent.~(p).map(_._1)
 
   // TODO: Scaladoc
-  def |[B >: A](p: RowParser[B]): RowParser[B] = RowParser { row =>
-    parent(row) match {
-      case Error(_) => p(row)
-      case a => a
+  def |[B >: A](p: RowParser[B]): RowParser[B] =
+    new RowParser[B] {
+      def apply(row: Row) = parent(row) match {
+        case Error(_) => p(row)
+        case a => a
+      }
+      def validate(meta: MetaData): MayErr[List[SqlRequestError], Unit] =
+        parent.validate(meta).toEither.left.flatMap { errors =>
+          p.validate(meta).toEither.left.map(errors ++ _)
+        }
     }
-  }
 
   /**
    * Returns a row parser for optional column,
    * that will turn missing or null column as None.
    */
-  def ? : RowParser[Option[A]] = RowParser {
-    parent(_) match {
-      case Success(a) => Success(Some(a))
-      case Error(UnexpectedNullableFound(_)) | Error(ColumnNotFound(_, _)) =>
-        Success(None)
-      case e @ Error(f) => e
+  def ? : RowParser[Option[A]] =
+    new RowParser[Option[A]] {
+      def apply(row: Row) = parent(row) match {
+        case Success(a) => Success(Some(a))
+        case Error(UnexpectedNullableFound(_)) | Error(ColumnNotFound(_, _)) =>
+          Success(None)
+        case e @ Error(f) => e
+      }
+
+      def validate(meta: MetaData): MayErr[List[SqlRequestError], Unit] =
+        MayErr(parent.validate(meta).toEither.left.flatMap { errors =>
+          val filteredErrors = errors.filter {
+            case UnexpectedNullableFound(_) | ColumnNotFound(_, _) => false
+            case _ => true
+          }
+          if (filteredErrors.isEmpty) Right(()) else Left(filteredErrors)
+        })
     }
-  }
 
   /** Alias for [[flatMap]] */
   def >>[B](f: A => RowParser[B]): RowParser[B] = flatMap(f)
@@ -656,6 +718,7 @@ trait RowParser[+A] extends (Row => SqlResult[A]) { parent =>
    */
   def singleOpt: ResultSetParser[Option[A]] = ResultSetParser.singleOpt(parent)
 
+  def validate(meta: MetaData): MayErr[List[SqlRequestError], Unit]
 }
 
 /** Parser for scalar row (row of one single column). */

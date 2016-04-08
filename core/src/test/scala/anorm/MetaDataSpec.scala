@@ -38,7 +38,7 @@ object MetaDataSpec extends org.specs2.mutable.Specification {
         ".bar", Some("bar")), false, "int")
 
       "without aliaser" in {
-        MetaData.parse(rs, ColumnAliaser.empty).
+        MetaData.parse(rs.getMetaData(), ColumnAliaser.empty).
           aka("metadata") must_== MetaData(List(item1, item2, item3))
       }
 
@@ -48,7 +48,7 @@ object MetaDataSpec extends org.specs2.mutable.Specification {
         val itemB = item2.copy(column =
           item2.column.copy(alias = Some("prefix.foo")))
 
-        MetaData.parse(rs, ColumnAliaser({
+        MetaData.parse(rs.getMetaData(), ColumnAliaser({
           case (1, cn) => "my_id"
           case (_, ColumnName(".foo", _)) => "prefix.foo"
         })) must_== MetaData(List(itemA, itemB, item3))
@@ -60,7 +60,7 @@ object MetaDataSpec extends org.specs2.mutable.Specification {
         val itemC = item3.copy(column =
           item3.column.copy(alias = Some("barbar")))
 
-        MetaData.parse(rs, ColumnAliaser.perPositions((2 to 3).toSet) {
+        MetaData.parse(rs.getMetaData(), ColumnAliaser.perPositions((2 to 3).toSet) {
           case (2, _) => "prefix.foo"
           case _ => "barbar"
         }) must_== MetaData(List(item1, itemB, itemC))
@@ -72,7 +72,7 @@ object MetaDataSpec extends org.specs2.mutable.Specification {
         val itemC = item3.copy(column =
           item3.column.copy(alias = Some("prefix.bar")))
 
-        MetaData.parse(rs, ColumnAliaser.
+        MetaData.parse(rs.getMetaData(), ColumnAliaser.
           withPattern((2 to 3).toSet, "prefix.")) must_== MetaData(
           List(item1, itemB, itemC))
       }
@@ -81,7 +81,7 @@ object MetaDataSpec extends org.specs2.mutable.Specification {
         val itemB = item2.copy(column =
           item2.column.copy(alias = Some("prefix.foo")))
 
-        MetaData.parse(rs, ColumnAliaser.
+        MetaData.parse(rs.getMetaData(), ColumnAliaser.
           withPattern1("prefix.")(2, 2)) must_== MetaData(
           List(item1, itemB, item3))
       }

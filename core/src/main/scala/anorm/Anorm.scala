@@ -200,6 +200,12 @@ private[anorm] trait Sql extends WithResult {
   def executeQuery()(implicit connection: Connection): SqlQueryResult =
     SqlQueryResult(resultSet(connection), resultSetOnFirstRow)
 
+  def validate(parser: RowParser[_])(implicit conn: Connection): MayErr[List[SqlRequestError], Unit] = {
+    preparedStatement(conn).acquireAndGet { stmt =>
+      val meta = MetaData.parse(stmt.getMetaData(), ColumnAliaser.empty)
+      parser.validate(meta)
+    }
+  }
 }
 
 object Sql { // TODO: Rename to SQL

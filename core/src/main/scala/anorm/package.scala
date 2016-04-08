@@ -64,7 +64,7 @@ package object anorm {
   implicit class SqlStringInterpolation(val sc: StringContext) extends AnyVal {
     def SQL(args: ParameterValue*) = {
       val (ts, ps) = TokenizedStatement.stringInterpolation(sc.parts, args)
-      SimpleSql(SqlQuery.prepare(ts, ts.names), ps, RowParser(Success(_)))
+      SimpleSql(SqlQuery.prepare(ts, ts.names), ps, RowParser.successful)
     }
   }
 
